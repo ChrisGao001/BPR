@@ -1,3 +1,4 @@
+# -*- coding:utf-8 -*-
 # item:8533
 # user:733
 
@@ -47,7 +48,7 @@ class rnn(object):
         for n in range(self.num_user):
             self.reset_state()
             for t in range(len(self.train_data[n]) - self.hps.num_test):
-                sys.stdout.write('Training user: %10d, item: %10d\r' % (n,t))
+                sys.stdout.write('Training user: %5d, item: %5d\r' % (n, t))
                 sys.stdout.flush()
                 self.train_step(
                     self.train_data[n][t] - 1, self.train_data[n][t + 1] - 1, self.neg[n][t + 1])
@@ -58,50 +59,66 @@ class rnn(object):
         for n in range(self.num_user):
             self.reset_state()
             for t in range(len(self.train_data[n])):
-                pred = self.prediction(self.train_data[n][t])
+                sys.stdout.write('Predicting user: %5d, item: %5d\r' % (n, t))
+                sys.stdout.flush()
+                pred = self.prediction(self.item[self.train_data[n][t]])
+                # print(pred)
             for t in range(self.hps.num_test):
                 tmp = np.dot(pred, self.item.T)
+                # print(tmp)
                 sort_list = np.argsort(-tmp)
                 for k in range(10):
                     if sort_list[k] == self.data[n][-self.hps.num_test + t]:
                         num_pred += 1
                         break
                 all_pred += 1
+                pred = self.prediction(pred)
         return num_pred, all_pred
 
-    def prediction(self, idx_inp):
-        tmp = np.dot(self.item[idx_inp], self.Wx)+ np.dot(self.h[0], self.Wh)
-        self.h[0] = tmp
+    def prediction(self, input):
+        self.h[0] = self.sigmoid(
+            np.dot(input, self.Wx) + np.dot(self.h[0], self.Wh))
         return self.h[0]
 
     def train_step(self, idx_inp, idx_pos, idx_neg):
+        # print(self.Wx)
+        # print(self.Wh)
+        # input()
         # 存储输入
         self.idx_inps[1:] = self.idx_inps[:-1]
         self.idx_inps[0] = idx_inp
         # 前向
         self.h[1:] = self.h[:-1]
+        # ht = sigmoid(Wx * x + Wh * ht_1)
         self.h[0] = self.sigmoid(np.dot(self.item[self.idx_inps[0]], self.Wx) +
-                                 np.dot(self.h[0], self.Wh))
-        Xuij = self.h[0] * (self.item[idx_pos] - self.item[idx_neg])
+                                 np.dot(self.h[1], self.Wh))
+        # Xuij = ht * xi - ht * xj
+        Xij = np.dot(self.h[0], (self.item[idx_pos] - self.item[idx_neg]))
         # 后向
-        share = self.sigmoid(-Xuij)
-        self.item[idx_pos] = self.hps.learning_rate * \
+        share = self.sigmoid(-Xij)
+        self.item[idx_pos] += self.hps.learning_rate * \
             (share * self.h[0] - self.hps.lamda * self.item[idx_pos])
-        self.item[idx_neg] = self.hps.learning_rate * \
+        self.item[idx_neg] += self.hps.learning_rate * \
             (-share * self.h[0] - self.hps.lamda * self.item[idx_neg])
-        for i in range(self.hps.num_unrolling):
-            product = 1
-            for j in range(i):
-                product = self.h[j] * (1 - self.h[j])
-            self.Wx = self.hps.learning_rate * \
-                (share * product *
-                 (self.item[idx_pos] - self.item[idx_neg]) * self.item[self.idx_inps[i]] -
-                 self.hps.lamda * self.Wx)
-            self.Wh = self.hps.learning_rate * \
-                (share * product *
-                 (self.item[idx_pos] - self.item[idx_neg]) * self.h[i] -
-                 self.hps.lamda * self.Wh)
-
+        dWx = 0
+        dWh = 0
+        product_dWx = 1
+        product_dWh = 1
+        for i in range(1, self.hps.num_unrolling):
+            if i == 0:
+                product_dWx = self.h[i] * (1 - self.h[i]) * \
+                    (self.item[idx_pos] - self.item[idx_neg])
+                product_dWh = self.h[i] * (1 - self.h[i]) * \
+                    (self.item[idx_pos] - self.item[idx_neg])
+            else:
+                product_dWx *= np.dot(self.h[i] * (1 - self.h[i]), self.Wh.T)
+                product_dWh *= np.dot(self.h[i] * (1 - self.h[i]), self.Wx.T)
+            dWx += np.dot(self.item[self.idx_inps[i]].reshape((1,-1)), product_dWx.reshape((1,-1)).T)
+            dWh += np.dot(self.h[i].reshape((1,-1)), product_dWx.reshape((1,-1)).T)
+            self.Wx += self.hps.learning_rate * \
+                (share * dWx - self.hps.lamda * self.Wx)
+            self.Wh += self.hps.learning_rate * \
+                (share * dWh - self.hps.lamda * self.Wh)
     def _load_data(self):
         self.data = []
         self.train_data = []
@@ -129,7 +146,7 @@ class rnn(object):
         return 1 / (1 + np.exp(-x))
 
 
-R = rnn(hps('user_cart.json'))
+R = rnn(hps('./data/user_cart.json'))
 for step in range(500):
     R.train()
     print('Step %d done.                        ' % step)
