@@ -34,6 +34,29 @@ class rnn(object):
         self._load_data()
         self.reset_train_state()
         self.reset_state()
+        
+    def _load_data(self):
+        self.data = []
+        self.train_data = []
+        self.neg = []
+        self.num_user = 0
+        with open(self.hps.filename, 'r') as f:
+            for line in f:
+                linedata = json.loads(line)
+                if len(linedata) < self.hps.num_test + 1:
+                    continue
+                self.num_user += 1
+                self.data.append([int(i) for i in linedata])
+                self.train_data.append([int(i)
+                                        for i in linedata][: -self.hps.num_test])
+                tmp = []
+                for i in linedata:
+                    while True:
+                        j = random.randint(0, 8532)
+                        if j != int(i - 1):
+                            break
+                    tmp.append(j)
+                self.neg.append(tmp)
 
     def reset_train_state(self):
         self.Wx = np.random.randn(10, 10) * 0.5
@@ -44,46 +67,21 @@ class rnn(object):
     def reset_state(self):
         self.h = np.zeros((self.hps.num_unrolling, self.hps.hidden_size))
 
+    def sigmoid(self, x):
+        return 1 / (1 + np.exp(-x))
+
     def train(self):
+        counter=0
         for n in range(self.num_user):
             self.reset_state()
             for t in range(len(self.train_data[n]) - self.hps.num_test):
                 sys.stdout.write('Training user: %5d, item: %5d\r' % (n, t))
                 sys.stdout.flush()
+                counter+=1
                 self.train_step(
                     self.train_data[n][t] - 1, self.train_data[n][t + 1] - 1, self.neg[n][t + 1])
 
-    def eval(self):
-        num_pred = 0
-        all_pred = 0
-        for n in range(self.num_user):
-            self.reset_state()
-            for t in range(len(self.train_data[n])):
-                sys.stdout.write('Predicting user: %5d, item: %5d\r' % (n, t))
-                sys.stdout.flush()
-                pred = self.prediction(self.item[self.train_data[n][t]])
-                # print(pred)
-            for t in range(self.hps.num_test):
-                tmp = np.dot(pred, self.item.T)
-                # print(tmp)
-                sort_list = np.argsort(-tmp)
-                for k in range(10):
-                    if sort_list[k] == self.data[n][-self.hps.num_test + t]:
-                        num_pred += 1
-                        break
-                all_pred += 1
-                pred = self.prediction(pred)
-        return num_pred, all_pred
-
-    def prediction(self, input):
-        self.h[0] = self.sigmoid(
-            np.dot(input, self.Wx) + np.dot(self.h[0], self.Wh))
-        return self.h[0]
-
     def train_step(self, idx_inp, idx_pos, idx_neg):
-        # print(self.Wx)
-        # print(self.Wh)
-        # input()
         # 存储输入
         self.idx_inps[1:] = self.idx_inps[:-1]
         self.idx_inps[0] = idx_inp
@@ -100,50 +98,47 @@ class rnn(object):
             (share * self.h[0] - self.hps.lamda * self.item[idx_pos])
         self.item[idx_neg] += self.hps.learning_rate * \
             (-share * self.h[0] - self.hps.lamda * self.item[idx_neg])
-        dWx = 0
-        dWh = 0
-        product_dWx = 1
-        product_dWh = 1
-        for i in range(1, self.hps.num_unrolling):
+        for i in range(0, self.hps.num_unrolling):
             if i == 0:
-                product_dWx = self.h[i] * (1 - self.h[i]) * \
-                    (self.item[idx_pos] - self.item[idx_neg])
-                product_dWh = self.h[i] * (1 - self.h[i]) * \
+                product = self.h[i] * (1 - self.h[i]) * \
                     (self.item[idx_pos] - self.item[idx_neg])
             else:
-                product_dWx *= np.dot(self.h[i] * (1 - self.h[i]), self.Wh.T)
-                product_dWh *= np.dot(self.h[i] * (1 - self.h[i]), self.Wx.T)
-            dWx += np.dot(self.item[self.idx_inps[i]].reshape((1,-1)), product_dWx.reshape((1,-1)).T)
-            dWh += np.dot(self.h[i].reshape((1,-1)), product_dWx.reshape((1,-1)).T)
+                product = self.h[i] * (1 - self.h[i]) * \
+                    np.dot(product.reshape((1, -1)), self.Wh.T)
+            dWx = np.dot(self.item[self.idx_inps[i]].reshape((1, -1)).T, product.reshape((1, -1)))
+            if i+1<self.hps.num_unrolling:
+                dWh = np.dot(self.h[i+1].reshape((1, -1)).T, product.reshape((1, -1)))
+            else:
+                dWh=0
             self.Wx += self.hps.learning_rate * \
                 (share * dWx - self.hps.lamda * self.Wx)
             self.Wh += self.hps.learning_rate * \
                 (share * dWh - self.hps.lamda * self.Wh)
-    def _load_data(self):
-        self.data = []
-        self.train_data = []
-        self.neg = []
-        self.num_user = 0
-        with open(self.hps.filename, 'r') as f:
-            for line in f:
-                linedata = json.loads(line)
-                if len(linedata) < self.hps.num_test + 1:
-                    continue
-                self.num_user += 1
-                self.data.append([int(i) for i in linedata])
-                self.train_data.append([int(i)
-                                        for i in linedata][:-self.hps.num_test])
-                tmp = []
-                for i in linedata:
-                    while True:
-                        j = random.randint(0, 8532)
-                        if j != int(i - 1):
-                            break
-                    tmp.append(j)
-                self.neg.append(tmp)
 
-    def sigmoid(self, x):
-        return 1 / (1 + np.exp(-x))
+    def eval(self):
+        num_pred = 0
+        all_pred = 0
+        for n in range(self.num_user):
+            self.reset_state()
+            for t in range(len(self.train_data[n]) - self.hps.num_test):
+                sys.stdout.write('Predicting user: %5d, item: %5d\r' % (n, t))
+                sys.stdout.flush()
+                pred = self.prediction(self.item[self.train_data[n][t]])
+            for t in range(self.hps.num_test):
+                tmp = np.dot(pred, self.item.T)
+                sort_list = np.argsort(-tmp)
+                for k in range(10):
+                    if sort_list[k] == self.data[n][-self.hps.num_test + t]:
+                        num_pred += 1
+                        break
+                all_pred += 1
+                pred = self.prediction(pred)
+        return num_pred, all_pred
+
+    def prediction(self, input):
+        self.h[0] = self.sigmoid(
+            np.dot(input, self.Wx) + np.dot(self.h[0], self.Wh))
+        return self.h[0]
 
 
 R = rnn(hps('./data/user_cart.json'))
