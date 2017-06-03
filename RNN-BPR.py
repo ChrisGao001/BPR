@@ -13,7 +13,7 @@ class hps(object):
     def __init__(self,
                  filename='data/user_cart.json',
                  num_test=1,
-                 learning_rate=0.01,
+                 learning_rate=0.02,
                  lamda_pos=0.001,
                  lamda=0.001,
                  hidden_size=10,
